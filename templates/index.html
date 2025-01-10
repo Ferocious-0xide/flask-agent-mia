@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heroku Agent Q&A Interface</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.4.1/css/bootstrap.min.css">
+    <style>
+        .jumbotron {
+            background: #532F8C;
+            color: white;
+            padding-bottom: 80px;
+        }
+        .jumbotron .btn-primary {
+            background-color: #845ac7;
+            border-color: #845ac7;
+            margin-top: 20px;
+            padding: 15px 30px;
+        }
+        .jumbotron .btn-primary:hover {
+            background-color: #7646c1;
+        }
+        .jumbotron p {
+            color: #d9ccee;
+            max-width: 75%;
+            margin: 1em auto 2em;
+        }
+        .qa-section {
+            background-color: white;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+        }
+        .alert-info {
+            background-color: #d9ccee;
+            border-color: #845ac7;
+            color: #532F8C;
+        }
+        .question-input {
+            margin: 20px 0;
+        }
+        .answer-box {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border-left: 4px solid #845ac7;
+        }
+        #questionForm {
+            margin-bottom: 30px;
+        }
+        .recent-questions {
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="jumbotron text-center">
+        <div class="container">
+            <h1>Heroku Agent Q&A</h1>
+            <p>Ask questions about the Heroku Agent capabilities and get instant answers powered by our API.</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="alert alert-info text-center" role="alert">
+            Ask questions about web browsing, database operations, code execution, or any other agent capabilities.
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="qa-section">
+                    <form id="questionForm" method="POST">
+                        <div class="form-group">
+                            <label for="question">Your Question:</label>
+                            <input type="text" class="form-control input-lg" id="question" name="question" 
+                                   placeholder="Ask about agent capabilities..." required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Ask Question</button>
+                    </form>
+
+                    {% if question %}
+                    <div class="answer-box">
+                        <h4>Q: {{ question }}</h4>
+                        <p>A: {{ answer }}</p>
+                    </div>
+                    {% endif %}
+
+                    <div class="recent-questions">
+                        <h3>Recent Questions</h3>
+                        {% for qa in recent_qa %}
+                        <div class="answer-box">
+                            <h4>Q: {{ qa.question }}</h4>
+                            <p>A: {{ qa.answer }}</p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.4.1/js/bootstrap.min.js"></script>
+</body>
+</html>
