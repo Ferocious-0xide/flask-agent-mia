@@ -53,6 +53,19 @@
         .recent-questions {
             margin-top: 30px;
         }
+        .btn-clear {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            float: right;
+        }
+        .btn-clear:hover {
+            background-color: #5a6268;
+            color: white;
+        }
+        .button-group {
+            margin: 20px 0;
+        }
     </style>
 </head>
 <body>
@@ -77,7 +90,10 @@
                             <input type="text" class="form-control input-lg" id="question" name="question" 
                                    placeholder="Ask about agent capabilities..." required>
                         </div>
-                        <button type="submit" class="btn btn-primary">Ask Question</button>
+                        <div class="button-group">
+                            <button type="submit" class="btn btn-primary">Ask Question</button>
+                            <a href="{{ url_for('clear_chat') }}" class="btn btn-clear">Clear Chat</a>
+                        </div>
                     </form>
 
                     {% if question %}

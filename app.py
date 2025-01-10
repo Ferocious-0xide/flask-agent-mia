@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, redirect, url_for
 import requests
 from functools import wraps
 import json
@@ -171,6 +171,12 @@ class HerokuAgent:
 
 # Initialize the Heroku agent
 agent = HerokuAgent(HEROKU_API_KEY)
+
+@app.route('/clear', methods=['GET'])
+def clear_chat():
+    """Clear the chat history and redirect to home."""
+    recent_qa.clear()
+    return redirect(url_for('qa_interface'))
 
 @app.route('/', methods=['GET', 'POST'])
 def qa_interface():
