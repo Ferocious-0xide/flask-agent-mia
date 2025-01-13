@@ -15,31 +15,72 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Get Heroku configuration from environment variables
-HEROKU_API_KEY = os.getenv('HEROKU_API_KEY')
-HEROKU_APP_NAME = os.getenv('HEROKU_APP_NAME')
-MODEL_API_KEY = os.getenv('HEROKU_MANAGED_INFERENCE_API_KEY')
-
-# Store recent Q&As in memory (you could replace this with a database)
-recent_qa = deque(maxlen=5)
-
-# Sample Q&A data - you can expand this or connect to an actual QA service
-qa_data = {
-    "web browsing": "The agent can perform both single-page and multi-page web browsing, extracting content and data from websites securely.",
-    "database": "The agent can interact with PostgreSQL databases, including schema inspection and secure query execution.",
-    "code execution": "The agent can execute code in various languages and run commands on Heroku dynos safely.",
-    "pdf": "The agent can read and extract content from PDF documents for analysis.",
-    "search": "The agent can perform web searches and return relevant results.",
-    "default": "I'm not sure about that specific capability. Please ask about web browsing, database operations, code execution, PDF processing, or web search functionality."
+ENV_VARS = {
+    "INFERENCE_URL": os.getenv('INFERENCE_URL'),
+    "INFERENCE_KEY": os.getenv('INFERENCE_KEY'),
+    "INFERENCE_MODEL_ID": os.getenv('INFERENCE_MODEL_ID'),
+    "HEROKU_API_KEY": os.getenv('HEROKU_API_KEY'),
+    "HEROKU_APP_NAME": os.getenv('HEROKU_APP_NAME'),
+    "APP_API_KEY": os.getenv('APP_API_KEY')
 }
+
+# Validate required environment variables
+for env_var, value in ENV_VARS.items():
+    if value is None:
+        logger.error(f"Environment variable '{env_var}' is missing.")
+
+# Store recent Q&As in memory
+recent_qa = deque(maxlen=5)
 
 def require_api_key(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         api_key = request.headers.get('X-API-Key')
-        if not api_key or api_key != os.getenv('APP_API_KEY'):
+        if not api_key or api_key != ENV_VARS['APP_API_KEY']:
             return jsonify({'error': 'Unauthorized'}), 401
         return f(*args, **kwargs)
     return decorated_function
+
+class ClaudeAgent:
+    def __init__(self, inference_url, inference_key, model_id):
+        self.inference_url = inference_url
+        self.headers = {
+            "Authorization": f"Bearer {inference_key}",
+            "Content-Type": "application/json"
+        }
+        self.model_id = model_id
+
+    def generate_chat_completion(self, question: str) -> str:
+        """Generate a response using Claude API."""
+        try:
+            endpoint_url = f"{self.inference_url}/v1/chat/completions"
+            
+            payload = {
+                "model": self.model_id,
+                "messages": [
+                    {"role": "user", "content": question}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 500,
+                "stream": False
+            }
+
+            response = requests.post(
+                endpoint_url,
+                headers=self.headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                logger.error(f"API request failed: {response.status_code}, {response.text}")
+                return f"I apologize, but I encountered an error: {response.status_code}"
+                
+        except Exception as e:
+            logger.error(f"Error in generate_chat_completion: {str(e)}")
+            return "I apologize, but I encountered an error processing your request."
 
 class HerokuAgent:
     def __init__(self, api_key: str):
@@ -169,14 +210,14 @@ class HerokuAgent:
             logger.error(f"Error in search_web: {str(e)}")
             raise
 
-# Initialize the Heroku agent
-agent = HerokuAgent(HEROKU_API_KEY)
+# Initialize the agents
+claude_agent = ClaudeAgent(
+    ENV_VARS["INFERENCE_URL"],
+    ENV_VARS["INFERENCE_KEY"],
+    ENV_VARS["INFERENCE_MODEL_ID"]
+)
 
-@app.route('/clear', methods=['GET'])
-def clear_chat():
-    """Clear the chat history and redirect to home."""
-    recent_qa.clear()
-    return redirect(url_for('qa_interface'))
+heroku_agent = HerokuAgent(ENV_VARS["HEROKU_API_KEY"])
 
 @app.route('/', methods=['GET', 'POST'])
 def qa_interface():
@@ -184,20 +225,12 @@ def qa_interface():
     answer = None
     
     if request.method == 'POST':
-        question = request.form.get('question', '').strip().lower()
-        
-        # Simple keyword-based answer matching
-        answer = None
-        for keyword, response in qa_data.items():
-            if keyword in question:
-                answer = response
-                break
-        
-        if not answer:
-            answer = qa_data['default']
+        question = request.form.get('question', '').strip()
+        if question:
+            # Get response from Claude
+            answer = claude_agent.generate_chat_completion(question)
             
-        # Add to recent questions
-        if question and answer:
+            # Add to recent questions
             recent_qa.appendleft({
                 'question': question,
                 'answer': answer
@@ -207,6 +240,12 @@ def qa_interface():
                          question=question,
                          answer=answer,
                          recent_qa=list(recent_qa))
+
+@app.route('/clear', methods=['GET'])
+def clear_chat():
+    """Clear the chat history and redirect to home."""
+    recent_qa.clear()
+    return redirect(url_for('qa_interface'))
 
 @app.route('/browse', methods=['POST'])
 @require_api_key
@@ -218,7 +257,7 @@ async def browse():
         return jsonify({'error': 'URL is required'}), 400
     
     try:
-        result = await agent.web_browsing_single_page(url)
+        result = await heroku_agent.web_browsing_single_page(url)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -233,7 +272,7 @@ async def browse_multi():
         return jsonify({'error': 'List of URLs is required'}), 400
     
     try:
-        result = await agent.web_browsing_multi_page(urls)
+        result = await heroku_agent.web_browsing_multi_page(urls)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -247,7 +286,7 @@ async def get_schema():
         return jsonify({'error': 'Database URL is required'}), 400
     
     try:
-        result = await agent.database_get_schema(database_url)
+        result = await heroku_agent.database_get_schema(database_url)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -264,7 +303,7 @@ async def run_query():
         return jsonify({'error': 'Query and database URL are required'}), 400
     
     try:
-        result = await agent.database_run_query(query, database_url)
+        result = await heroku_agent.database_run_query(query, database_url)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -281,7 +320,7 @@ async def execute_code():
         return jsonify({'error': 'Code and language are required'}), 400
     
     try:
-        result = await agent.code_exec(code, language)
+        result = await heroku_agent.code_exec(code, language)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -297,7 +336,7 @@ async def run_command():
         return jsonify({'error': 'Command is required'}), 400
     
     try:
-        result = await agent.dyno_run_command(command)
+        result = await heroku_agent.dyno_run_command(command)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -313,7 +352,7 @@ async def read_pdf():
         return jsonify({'error': 'PDF URL is required'}), 400
     
     try:
-        result = await agent.pdf_read(pdf_url)
+        result = await heroku_agent.pdf_read(pdf_url)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -329,26 +368,22 @@ async def search():
         return jsonify({'error': 'Search query is required'}), 400
     
     try:
-        result = await agent.search_web(query)
+        result = await heroku_agent.search_web(query)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/ask', methods=['POST'])
 def api_ask():
+    """API endpoint for questions."""
     data = request.get_json()
-    question = data.get('question', '').strip().lower()
+    question = data.get('question', '').strip()
     
-    # Simple keyword-based answer matching
-    answer = None
-    for keyword, response in qa_data.items():
-        if keyword in question:
-            answer = response
-            break
-    
-    if not answer:
-        answer = qa_data['default']
+    if not question:
+        return jsonify({'error': 'Question is required'}), 400
         
+    answer = claude_agent.generate_chat_completion(question)
+    
     return jsonify({
         'question': question,
         'answer': answer
