@@ -1,5 +1,6 @@
 import os
-from flask import Flask, request, jsonify, render_template, redirect, url_for
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+app.secret_key = os.urandom(24)  # Required for session
 import requests
 from functools import wraps
 import json
@@ -210,6 +211,70 @@ class HerokuAgent:
             logger.error(f"Error in search_web: {str(e)}")
             raise
 
+class CohereAgent:
+    def __init__(self, embedding_url, embedding_key, model_id):
+        self.embedding_url = embedding_url
+        self.model_id = model_id
+        self.headers = {
+            "Authorization": f"Bearer {embedding_key}",
+            "Content-Type": "application/json"
+        }
+
+    def get_embeddings(self, texts: List[str], input_type: str = "search_document") -> Dict:
+        """Generate embeddings for a list of texts."""
+        try:
+            payload = {
+                "model": self.model_id,
+                "input": texts,
+                "input_type": input_type,
+                "encoding_format": "base64",
+                "embedding_types": ["float"]
+            }
+
+            response = requests.post(
+                f"{self.embedding_url}/v1/embeddings",
+                headers=self.headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"Embedding API request failed: {response.status_code}, {response.text}")
+                raise Exception(f"Embedding API request failed: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Error in get_embeddings: {str(e)}")
+            raise
+
+def extract_text_from_file(file_path: str) -> str:
+    """Extract text content from various file types."""
+    file_ext = file_path.lower().split('.')[-1]
+    
+    try:
+        if file_ext == 'txt':
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+                
+        elif file_ext == 'pdf':
+            text = []
+            with open(file_path, 'rb') as f:
+                pdf_reader = PyPDF2.PdfReader(f)
+                for page in pdf_reader.pages:
+                    text.append(page.extract_text())
+            return '\n'.join(text)
+            
+        elif file_ext in ['doc', 'docx']:
+            doc = docx.Document(file_path)
+            return '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+            
+        else:
+            raise ValueError(f"Unsupported file type: {file_ext}")
+            
+    except Exception as e:
+        logger.error(f"Error extracting text from file: {str(e)}")
+        raise
+
 # Initialize the agents
 claude_agent = ClaudeAgent(
     ENV_VARS["INFERENCE_URL"],
@@ -219,18 +284,112 @@ claude_agent = ClaudeAgent(
 
 heroku_agent = HerokuAgent(ENV_VARS["HEROKU_API_KEY"])
 
+cohere_agent = CohereAgent(
+    ENV_VARS["EMBEDDING_URL"],
+    ENV_VARS["EMBEDDING_KEY"],
+    ENV_VARS["EMBEDDING_MODEL_ID"]
+)
+
+import os
+from werkzeug.utils import secure_filename
+
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'doc', 'docx'}
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Ensure upload folder exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/remove-file', methods=['POST'])
+def remove_file():
+    """Remove the current uploaded file."""
+    if 'current_file' in session:
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], session['current_file'])
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        session.pop('current_file', None)
+    return '', 204
+
 @app.route('/', methods=['GET', 'POST'])
 def qa_interface():
     question = None
     answer = None
+    current_file = session.get('current_file')
     
     if request.method == 'POST':
+        # Handle file upload
+        if 'file' in request.files:
+            file = request.files['file']
+            if file and file.filename != '' and allowed_file(file.filename):
+                filename = secure_filename(file.filename)
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                file.save(file_path)
+                
+                try:
+                    # Extract text from the file
+                    text_content = extract_text_from_file(file_path)
+                    
+                    # Get embeddings for the text
+                    embeddings = cohere_agent.get_embeddings([text_content])
+                    
+                    # Store the embeddings in the session
+                    session['current_embeddings'] = embeddings
+                    session['current_file'] = filename
+                    
+                except Exception as e:
+                    logger.error(f"Error processing file: {str(e)}")
+                    flash(f"Error processing file: {str(e)}", 'error')
+        
+        # Handle question
+        question = request.form.get('question', '').strip()
+        if question:
+            try:
+                # If we have embeddings, include them in the context
+                context = ""
+                if 'current_embeddings' in session:
+                    context = f"Using the context of the uploaded document with embeddings: {session['current_embeddings']}\n\n"
+                
+                # Get response from Claude with context
+                full_question = context + question if context else question
+                answer = claude_agent.generate_chat_completion(full_question)
+                
+                # Check if this question is already in recent_qa
+                existing_questions = [(i, qa) for i, qa in enumerate(recent_qa) 
+                                   if qa['question'].lower() == question.lower()]
+                for i, _ in existing_questions:
+                    recent_qa.remove(recent_qa[i])
+                
+                # Add to recent questions
+                recent_qa.appendleft({
+                    'question': question,
+                    'answer': answer
+                })
+                
+            except Exception as e:
+                logger.error(f"Error processing question: {str(e)}")
+                answer = f"Error processing your question: {str(e)}"
+    
+    return render_template('index.html',
+                         question=question,
+                         answer=answer,
+                         recent_qa=list(recent_qa),
+                         current_file=current_file)
         question = request.form.get('question', '').strip()
         if question:
             # Get response from Claude
             answer = claude_agent.generate_chat_completion(question)
             
-            # Add to recent questions
+            # Check if this question is already in recent_qa
+            # Remove previous instance if it exists
+            existing_questions = [(i, qa) for i, qa in enumerate(recent_qa) if qa['question'].lower() == question.lower()]
+            for i, _ in existing_questions:
+                recent_qa.remove(recent_qa[i])
+            
+            # Add the new Q&A to the front
             recent_qa.appendleft({
                 'question': question,
                 'answer': answer
