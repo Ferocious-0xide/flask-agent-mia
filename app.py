@@ -378,8 +378,8 @@ def qa_interface():
                          answer=answer,
                          recent_qa=list(recent_qa),
                          current_file=current_file)
-        question = request.form.get('question', '').strip()
-        if question:
+    question = request.form.get('question', '').strip()
+    if question:
             # Get response from Claude
             answer = claude_agent.generate_chat_completion(question)
             
