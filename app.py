@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, flash
 app.secret_key = os.urandom(24)  # Required for session
 import requests
 from functools import wraps
