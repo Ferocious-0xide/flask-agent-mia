@@ -21,7 +21,7 @@ ENV_VARS = {
     "INFERENCE_MODEL_ID": os.getenv('INFERENCE_MODEL_ID'),
     #"HEROKU_API_KEY": os.getenv('HEROKU_API_KEY'),
     #"HEROKU_APP_NAME": os.getenv('HEROKU_APP_NAME'),
-    #"APP_API_KEY": os.getenv('APP_API_KEY')
+    "APP_API_KEY": os.getenv('APP_API_KEY')
 }
 
 # Validate required environment variables
